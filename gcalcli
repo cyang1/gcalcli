@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # ** The MIT License **
 #
@@ -1603,6 +1603,68 @@ class gcalcli:
 
         self._IterateEvents(self.now, eventList, yearDate=True)
 
+    def NextMeetingQuery(self):
+        # Fetch meetings from now until just before midnight tonight
+        start = self.now
+        end = self.now.replace(hour=23, minute=59, second=59)
+        eventList = self._SearchForCalEvents(start, end, None)
+
+#        # Debugging
+#        def default(obj):
+#            """Default JSON serializer."""
+#            import calendar, datetime
+#
+#            if isinstance(obj, datetime.datetime):
+#                if obj.utcoffset() is not None:
+#                    obj = obj - obj.utcoffset()
+#            millis = int(
+#                calendar.timegm(obj.timetuple()) * 1000 +
+#                obj.microsecond / 1000
+#            )
+#            return millis
+#        import datetime, json
+#        print json.dumps(eventList, indent=4, default=default)
+
+        # Split meetings into currently happening and upcoming
+        current = []
+        upcoming = []
+        for event in eventList:
+            # skip all-day events
+            if not 'dateTime' in event['start']:
+                continue
+            start = event['s']
+            end = event['e']
+
+            skip = False
+            for attender in event.get('attendees', []):
+                if attender['email'] == 'your-email-here':
+                    if attender['responseStatus'] == 'declined':
+                        skip = True
+                    break
+            if skip: continue
+
+            if self.now > start and self.now < end:
+                current.append(event)
+            if self.now < start:
+                upcoming.append((start, event))
+
+        if not upcoming:
+            print "No more meetings today! :)"
+            return
+
+        # Remove all but the first upcoming meeting
+        upcoming.sort()
+        first = upcoming[0][1]
+        del upcoming
+
+        # Print the first upcoming meeting's start time, title, and location
+        msg = '%s: "%s" @ %s' % (
+            first['s'].strftime('%l:%M%P')[:-1],   # start time as "3:00p
+            first['summary'],
+            first.get('location', "(Unknown)")
+        )
+        print msg
+
     def AgendaQuery(self, startText='', endText=''):
 
         if startText == '':
@@ -2262,7 +2324,7 @@ def BowChickaWowWow():
         sys.exit(1)
 
     # No sense instaniating gcalcli for nothing
-    if not args[0] in ['list', 'search', 'agenda', 'calw', 'calm', 'quick',
+    if not args[0] in ['list', 'search', 'agenda', 'nextmeeting', 'calw', 'calm', 'quick',
                        'add', 'delete', 'edit', 'remind', 'import', 'help']:
         PrintErrMsg('Error: %s is an invalid command' % args[0])
         sys.exit(1)
@@ -2375,6 +2437,9 @@ def BowChickaWowWow():
 
         if not FLAGS.tsv:
             sys.stdout.write('\n')
+
+    elif args[0] == 'nextmeeting':
+        gcal.NextMeetingQuery()
 
     elif args[0] == 'calw':
         if not FLAGS.width:
