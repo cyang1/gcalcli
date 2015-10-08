@@ -1652,67 +1652,109 @@ class gcalcli:
         else:
             self._IterateEvents(self.now, eventList, yearDate=True)
 
-    def NextMeetingQuery(self):
-        # Fetch meetings from now until just before midnight tonight
-        start = self.now
+    def NextMeetingQuery(self, num=1):
+        # Fetch meetings until the end of the day.
+        start = self.now.replace(hour=0, minute=0, second=0)
         end = self.now.replace(hour=23, minute=59, second=59)
         eventList = self._SearchForCalEvents(start, end, None)
 
-#        # Debugging
-#        def default(obj):
-#            """Default JSON serializer."""
-#            import calendar, datetime
-#
-#            if isinstance(obj, datetime.datetime):
-#                if obj.utcoffset() is not None:
-#                    obj = obj - obj.utcoffset()
-#            millis = int(
-#                calendar.timegm(obj.timetuple()) * 1000 +
-#                obj.microsecond / 1000
-#            )
-#            return millis
-#        import datetime, json
-#        print json.dumps(eventList, indent=4, default=default)
-
-        # Split meetings into currently happening and upcoming
-        current = []
+        # Split meetings into previously happened and upcoming
+        previous_today = []
         upcoming = []
         for event in eventList:
             # skip all-day events
             if not 'dateTime' in event['start']:
                 continue
+
+            if FLAGS.email is not None:
+                attender = next((a for a in event.get('attendees', []) if a['email'] == FLAGS.email), None)
+                if attender and attender['responseStatus'] == 'declined':
+                    continue
+
             start = event['s']
             end = event['e']
-
-            skip = False
-            for attender in event.get('attendees', []):
-                if attender['email'] == 'your-email-here':
-                    if attender['responseStatus'] == 'declined':
-                        skip = True
-                    break
-            if skip: continue
-
-            if self.now > start and self.now < end:
-                current.append(event)
-            if self.now < start:
+            if start < self.now:
+                previous_today.append(event)
+            elif self.now < start:
                 upcoming.append((start, event))
 
         if not upcoming:
-            print "No more meetings today! :)"
+            print "No %smeetings today! :)" % ('more ' if previous_today else '')
             return
 
-        # Remove all but the first upcoming meeting
         upcoming.sort()
-        first = upcoming[0][1]
-        del upcoming
 
-        # Print the first upcoming meeting's start time, title, and location
-        msg = '%s: "%s" @ %s' % (
-            first['s'].strftime('%l:%M%P')[:-1],   # start time as "3:00p
-            first['summary'],
-            first.get('location', "(Unknown)")
-        )
-        print msg
+        for i in range(min(num, len(upcoming))):
+            _, event = upcoming[i]
+            print "%s: \"%s\" @ %s" % (
+                event['s'].strftime('%l:%M%p')[:-1],   # start time as "3:00p"
+                event['summary'],
+                event.get('location', '(Unknown)')
+            )
+
+    def NextDayQuery(self, num=1):
+        # Fetch meetings within the next `num` days.
+        today = self.now.replace(hour=0, minute=0, second=0)
+        end = today + timedelta(days=num)
+        eventList = self._SearchForCalEvents(today, end, None)
+
+        # Split meetings into previously happened and upcoming.
+        previous_today = []
+        upcoming_by_day = [[] for _ in xrange(num)]
+        for event in eventList:
+            # skip all-day events
+            if not 'dateTime' in event['start']:
+                continue
+
+            if FLAGS.email is not None:
+                attender = next((a for a in event.get('attendees', []) if a['email'] == FLAGS.email), None)
+                if attender and attender['responseStatus'] == 'declined':
+                    continue
+
+            start = event['s']
+            end = event['e']
+            if start < self.now:
+                previous_today.append(event)
+            elif self.now < start:
+                delta = start - today
+                upcoming_by_day[delta.days].append((start, event))
+
+        msgs_by_day = [[] for _ in xrange(num)]
+        for day, upcoming in enumerate(upcoming_by_day):
+            date = self.now + timedelta(days=day)
+
+            if not upcoming:
+                if day == 0:
+                    date_formatted = 'today'
+                elif day == 1:
+                    date_formatted = 'tomorrow'
+                else:
+                    date_formatted = "on %d.%d" % (date.month, date.day)
+
+                msgs_by_day[day].append("No %smeetings %s! :)" % (
+                    'more ' if day == 0 and previous_today else '',
+                    date_formatted
+                ))
+            else:
+                events = sorted(upcoming)
+
+                if day > 0:
+                    # Print the date header for groups of events not on today.
+                    msgs_by_day[day].append("%d.%02d (%d event%s total)" % (
+                        date.month,
+                        date.day,
+                        len(upcoming),
+                        's' if len(upcoming) != '1' else '',
+                    ))
+
+                for _, event in events:
+                    msgs_by_day[day].append("%s: \"%s\" @ %s" % (
+                        event['s'].strftime('%l:%M%p')[:-1],   # start time as "3:00p"
+                        event['summary'],
+                        event.get('location', '(Unknown)')
+                    ))
+
+        print '\n\n'.join('\n'.join(msgs) for msgs in msgs_by_day)
 
     def AgendaQuery(self, startText='', endText=''):
 
@@ -2213,6 +2255,8 @@ gflags.DEFINE_multistring("calendar", [], "Which calendars to use")
 gflags.DEFINE_multistring("defaultCalendar", [],
                           "Optional default calendar to use if no --calendar "
                           "options are given")
+gflags.DEFINE_string("email", None, "Email address to use to filter attendees "
+                     "in nextmeeting")
 gflags.DEFINE_bool("military", False, "Use 24 hour display")
 
 # Single --detail that allows you to specify what parts you want
@@ -2381,7 +2425,7 @@ def BowChickaWowWow():
         sys.exit(1)
 
     # No sense instaniating gcalcli for nothing
-    if not args[0] in ['list', 'search', 'agenda', 'nextmeeting', 'calw', 'calm', 'quick',
+    if not args[0] in ['list', 'search', 'agenda', 'nextmeeting', 'nextday', 'calw', 'calm', 'quick',
                        'add', 'delete', 'edit', 'remind', 'import', 'help']:
         PrintErrMsg('Error: %s is an invalid command' % args[0])
         sys.exit(1)
@@ -2504,7 +2548,36 @@ def BowChickaWowWow():
             sys.stdout.write('\n')
 
     elif args[0] == 'nextmeeting':
-        gcal.NextMeetingQuery()
+        if len(args) == 2:
+            try:
+                # Test to make sure args[1] is a number
+                int(args[1])
+            except:
+                PrintErrMsg('Error: invalid nextmeeting arguments\n')
+                sys.exit(1)
+
+            gcal.NextMeetingQuery(num=int(args[1]))
+        elif len(args) == 1:
+            gcal.NextMeetingQuery()
+        else:
+            PrintErrMsg('Error: invalid nextmeeting arguments\n')
+            sys.exit(1)
+
+    elif args[0] == 'nextday':
+        if len(args) == 2:
+            try:
+                # Test to make sure args[1] is a number
+                int(args[1])
+            except:
+                PrintErrMsg('Error: invalid nextday arguments\n')
+                sys.exit(1)
+
+            gcal.NextDayQuery(num=int(args[1]))
+        elif len(args) == 1:
+            gcal.NextDayQuery()
+        else:
+            PrintErrMsg('Error: invalid nextday arguments\n')
+            sys.exit(1)
 
     elif args[0] == 'calw':
         if not FLAGS.width:
