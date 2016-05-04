@@ -1754,7 +1754,7 @@ class gcalcli:
                         event.get('location', '(Unknown)')
                     ))
 
-        print '\n\n'.join('\n'.join(msgs) for msgs in msgs_by_day)
+        print u'\n\n'.join(u'\n'.join(msgs) for msgs in msgs_by_day).encode('utf-8')
 
     def AgendaQuery(self, startText='', endText=''):
 
