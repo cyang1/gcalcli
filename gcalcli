@@ -192,7 +192,7 @@ try:
     from apiclient.errors import HttpError
     from oauth2client.file import Storage
     from oauth2client.client import OAuth2WebServerFlow
-    from oauth2client.tools import run
+    from oauth2client.tools import run_flow
 except ImportError as e:
     print "ERROR: Missing module - %s" % e.args[0]
     sys.exit(1)
@@ -1673,9 +1673,9 @@ class gcalcli:
 
             start = event['s']
             end = event['e']
-            if start < self.now:
+            if end < self.now:
                 previous_today.append(event)
-            elif self.now < start:
+            elif self.now < end:
                 upcoming.append((start, event))
 
         if not upcoming:
@@ -1713,9 +1713,9 @@ class gcalcli:
 
             start = event['s']
             end = event['e']
-            if start < self.now:
+            if end < self.now:
                 previous_today.append(event)
-            elif self.now < start:
+            elif self.now < end:
                 delta = start - today
                 upcoming_by_day[delta.days].append((start, event))
 
